@@ -4,17 +4,17 @@ Find actors who have shared the screen with both Nicolas Cage and Keanu Reeves �
 
 ## How it works
 
-The app performs a three-step data pipeline against the TMDB API, then computes the intersection client-side:
+An Express server handles all TMDB API communication so the API key never reaches the browser. The client connects to a single SSE endpoint and receives progress updates while the server works, then the final result when processing is complete.
+
+The server runs a four-step pipeline:
 
 1. **Resolve names to IDs** — searches for Nicolas Cage and Keanu Reeves by name to retrieve their TMDB person IDs. Both lookups run in parallel.
 
 2. **Fetch movie credits** — for each star, retrieves every film they appear in as a cast member. This gives a list of movie IDs to query.
 
-3. **Fetch cast lists** — for each of those movies, fetches the full cast. Because each star has appeared in a large number of films, these requests are batched in chunks of 8 and sent with a 400ms pause between batches to stay within TMDB's rate limits. Both stars' filmographies are processed in parallel.
+3. **Fetch cast lists** — for each of those movies, fetches the full cast. Requests are batched in chunks of 6 with a 550ms pause between batches to stay within TMDB's rate limits. Both stars' filmographies are processed in parallel.
 
-4. **Compute the intersection** — once all cast data is in memory, the app builds a co-star map for each star (actor ID → movies they appeared in together). It then walks Cage's co-star map and checks each entry against Reeves's co-star map. Actors present in both are collected into the final results list, sorted by TMDB popularity score.
-
-All data fetching and processing happens in the browser — there is no backend.
+4. **Compute the intersection** — once all cast data is in memory, the server builds a co-star map for each star (actor ID → movies they appeared in together). It then walks Cage's co-star map and checks each entry against Reeves's co-star map. Actors present in both are collected into the final results list, sorted by TMDB popularity score.
 
 ## Data fetching
 
@@ -22,8 +22,8 @@ All data fetching and processing happens in the browser — there is no backend.
 
 TMDB enforces a request rate limit. The app handles this in two ways:
 
-- **Chunked batching**: rather than firing all cast requests simultaneously, the app processes movies in groups of 8, waiting 400ms between each group.
-- **Exponential backoff**: if a request returns a `429 Too Many Requests` response, it retries automatically with increasing delays (1s, 2s, 4s, 8s) before giving up after five attempts.
+- **Chunked batching**: rather than firing all cast requests simultaneously, the server processes movies in groups of 6, waiting 550ms between each group.
+- **Exponential backoff**: if a request returns a `429 Too Many Requests` response, it retries automatically with increasing delays (1s, 2s, 4s, 8s) before giving up after six attempts.
 
 ### Endpoints
 
@@ -47,6 +47,7 @@ Nicolas Cage and Keanu Reeves each have a large number of film credits, which me
 ## Tech stack
 
 - React (via Vite)
+- Express (Node.js API server)
 - TMDB API
 
 ## Setup
@@ -54,7 +55,8 @@ Nicolas Cage and Keanu Reeves each have a large number of film credits, which me
 1. Create a `.env` file at the project root. A `.env.example` is included as a template:
 
 ```
-VITE_TMDB_API_KEY=your_bearer_token_here
+TMDB_API_KEY=your_bearer_token_here
+PORT=3001
 ```
 
 You'll need a free TMDB account to generate a Read Access Token at [themoviedb.org/settings/api](https://www.themoviedb.org/settings/api). Use the **API Read Access Token** (the long Bearer token), not the short API key.
@@ -65,14 +67,28 @@ You'll need a free TMDB account to generate a Read Access Token at [themoviedb.o
 npm install
 ```
 
-3. Start the dev server:
+3. Start both servers (two terminals):
 
 ```bash
+# Terminal 1 — Express API server
+npm run dev:server
+
+# Terminal 2 — Vite dev server (proxies /api to localhost:3001)
 npm run dev
 ```
+
+### Production
+
+```bash
+npm run build
+npm start
+```
+
+`npm start` runs the Express server which serves both the API and the compiled React app from `dist/`.
 
 ## Notes
 
 - Only movie credits are considered — TV appearances are excluded
-- The intersection is computed entirely client-side; no results are cached between sessions
+- The TMDB API key lives only on the server and is never bundled into the client JavaScript
+- No results are cached between sessions — each page load triggers a fresh pipeline run
 - Actors who appear in both a Cage film and a Reeves film via separate movies are included, even if those films share no other connection
